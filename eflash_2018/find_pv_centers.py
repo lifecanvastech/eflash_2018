@@ -254,6 +254,8 @@ def main():
         if not precomputed_centers:
             all_centers.append(np.column_stack((
                 np.ones(len(centroids)) * z, centroids[:, 0], centroids[:, 1])))
+        else:
+            all_centers[z] = all_centers[z][idxs]
         all_features.append(antibody_features)
         np.save("/media/share2/Lee/2018-11-02/features/features-%04d.npy" % z,
                 antibody_features)
