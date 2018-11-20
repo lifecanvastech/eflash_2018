@@ -81,7 +81,7 @@ def do_dog(imgmem, dog_low, dog_high,
 
 def main():
     args = parse_arguments()
-    files = glob.glob(args.source)
+    files = sorted(glob.glob(args.source))
     first_plane = tifffile.imread(files[0])
     x_extent = first_plane.shape[1]
     y_extent = first_plane.shape[0]
