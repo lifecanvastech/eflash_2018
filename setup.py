@@ -17,6 +17,7 @@ setup(
     entry_points=dict(console_scripts=[
         "find-pv-centers=eflash_2018.find_pv_centers:main",
         "detect-blobs=eflash_2018.detect_blobs:main",
-        "collect-patches=eflash_2018.collect_patches:main"
+        "collect-patches=eflash_2018.collect_patches:main",
+        "eflash-train=eflash_2018.train:main"
     ])
 )
