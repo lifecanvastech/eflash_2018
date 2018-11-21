@@ -251,14 +251,23 @@ def main():
                                            width,
                                            base_model,
                                            args.batch_size)
+        good = np.all(~(np.isnan(antibody_features) |
+                        np.isinf(antibody_features)), 1)
+        centroids = centroids[good]
+        antibody_features = antibody_features[good]
+        idxs = idxs[good]
         if not precomputed_centers:
-            all_centers.append(np.column_stack((
-                np.ones(len(centroids)) * z, centroids[:, 0], centroids[:, 1])))
+            my_centers = np.column_stack((
+                np.ones(len(centroids)) * z, centroids[:, 0], centroids[:, 1]))
+            all_centers.append(my_centers)
         else:
+            my_centers = all_centers[z][idxs]
             all_centers[z] = all_centers[z][idxs]
         all_features.append(antibody_features)
         np.save("/media/share2/Lee/2018-11-02/features/features-%04d.npy" % z,
                 antibody_features)
+        np.save("/media/share2/Lee/2018-11-02/coordinates/coordinates-%04d.npy" % z,
+                my_centers)
     all_centers = np.concatenate(all_centers)
     all_features = np.concatenate(all_features)
 
