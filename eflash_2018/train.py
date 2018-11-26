@@ -31,21 +31,28 @@ def parse_args():
 class MPLCanvas(FigureCanvas):
     def __init__(self, parent):
         figure = Figure()
-        self.axes = figure.add_subplot(1, 1, 1)
+        self.axes_xy = figure.add_subplot(2, 2, 1)
+        self.axes_xz = figure.add_subplot(2, 2, 2)
+        self.axes_yz = figure.add_subplot(2, 2, 4)
         super(MPLCanvas, self).__init__(figure)
         self.setParent(parent)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
                            QtWidgets.QSizePolicy.Expanding)
         self.updateGeometry()
 
-    def show(self, image):
-        self.axes.cla()
-        self.axes.imshow(image, interpolation='bicubic')
+    def show(self, image_xy, image_xz, image_yz):
+        self.axes_xy.cla()
+        self.axes_xy.imshow(image_xy, interpolation='bicubic')
+        self.axes_xz.cla()
+        self.axes_xz.imshow(image_xz, interpolation='bicubic')
+        self.axes_yz.cla()
+        self.axes_yz.imshow(image_yz, interpolation='bicubic')
         self.draw()
 
 
 class ApplicationWindow(QtWidgets.QMainWindow):
-    def __init__(self, patches, x, y, z, output_file):
+    def __init__(self, patches_xy, patches_xz, patches_yz,
+                 x, y, z, output_file):
         QtWidgets.QMainWindow.__init__(self)
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
         self.setWindowTitle("Train")
@@ -92,7 +99,14 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         self.main_widget.setFocus()
         self.setCentralWidget(self.main_widget)
 
-        self.patches = patches
+        self.patches_xy = patches_xy
+        self.patches_xz = patches_xz
+        self.patches_yz = patches_yz
+        n_patches = len(self.patches_xy)
+        n_features = np.prod(self.patches_xy.shape[1:])
+        patches = np.hstack(
+            [_.reshape(n_patches, n_features)
+             for _ in (patches_xy, patches_xz, patches_yz)])
         self.x, self.y, self.z = x, y, z
         self.output_file = output_file
         if os.path.exists(self.output_file):
@@ -106,11 +120,10 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                 if "pred_probs" in d:
                     self.pred_probs = d["pred_probs"]
         else:
-            self.marks = np.zeros(len(patches), np.int8)
+            self.marks = np.zeros(n_patches, np.int8)
             self.classifier = None
-            self.pca = PCA(n_components=24)
-        self.pca_features = self.pca.fit_transform(
-            patches.reshape((len(patches), np.prod(patches.shape[1:]))))
+            self.pca = PCA(n_components=32)
+        self.pca_features = self.pca.fit_transform(patches)
         self.imageNext()
 
 
@@ -167,7 +180,12 @@ class ApplicationWindow(QtWidgets.QMainWindow):
 
     def pick(self, mask):
         self.idx = mask[np.random.randint(0, len(mask))]
-        self.canvas.show(self.patches[self.idx])
+        self.show_current()
+
+    def show_current(self):
+        self.canvas.show(self.patches_xy[self.idx],
+                         self.patches_xz[self.idx],
+                         self.patches_yz[self.idx])
 
     def imageNextPositive(self):
         if self.classifier is None:
@@ -196,7 +214,7 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         order = np.argsort(np.abs(self.pred_probs[unmarked, 0] - .5))
         idx = np.random.randint(0, min(len(order), max(len(order) // 100, 10 )))
         self.idx = unmarked[order[idx]]
-        self.canvas.show(self.patches[self.idx])
+        self.show_current()
 
     def markPositive(self):
         self.marks[self.idx] = 1
@@ -209,11 +227,14 @@ def main():
     app = QtWidgets.QApplication(sys.argv)
     args = parse_args()
     with h5py.File(args.patch_file, "r") as fd:
-        patches = fd["patches"][:]
+        patches_xy = fd["patches_xy"][:]
+        patches_xz = fd["patches_xz"][:]
+        patches_yz = fd["patches_yz"][:]
         x = fd["x"][:]
         y = fd["y"][:]
         z = fd["z"][:]
-    window = ApplicationWindow(patches, x, y, z, args.output)
+    window = ApplicationWindow(patches_xy, patches_xz, patches_yz,
+                               x, y, z, args.output)
     window.setWindowTitle("Train")
     window.show()
     sys.exit(app.exec())

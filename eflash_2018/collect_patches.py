@@ -11,6 +11,8 @@ import json
 import argparse
 import glob
 import tqdm
+from .utils import RollingBuffer
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -62,36 +64,52 @@ def do_plane(filename:str,
 def main():
     args = parse_args()
     source_files = sorted(glob.glob(args.source))
+    rb = RollingBuffer(source_files, args.n_cores)
     points = np.array(json.load(open(args.points)))
     patch_size = args.patch_size
-    shared_memory = SharedMemory((len(points), patch_size, patch_size),
-                                 np.uint16)
+    half_patch_size = patch_size // 2
+    patches_xy, patches_xz, patches_yz = \
+        [np.zeros((len(points), patch_size, patch_size)) for _ in range(3)]
     points_out = []
     offset = 0
-    with multiprocessing.Pool(args.n_cores) as pool:
-        futures = []
-        for z in range(len(source_files)):
-            pz = points[(points[:, 2] >= z) & (points[:, 2] < z+1)]
-            if len(pz) > 0:
-                points_out.append(pz)
-                future = pool.apply_async(
-                    do_plane,
-                    (source_files[z],
-                     pz[:, :2].astype(int),
-                     shared_memory,
-                     offset)
-                )
-                futures.append(future)
-                offset += len(pz)
-        for future in tqdm.tqdm(futures):
-            future.get()
-    points_out = np.vstack(points_out)
+    for z in tqdm.tqdm(
+            range(half_patch_size, len(source_files) - half_patch_size)):
+        rb.release(z - half_patch_size)
+        pz = points[(points[:, 2] >= z) & (points[:, 2] < z+1)]
+        if len(pz) > 0:
+            for x, y in pz[:, :-1]:
+                x, y = int(x), int(y)
+                if x < half_patch_size or \
+                    x >= rb.shape[2] - half_patch_size or \
+                    y < half_patch_size or \
+                    y >= rb.shape[1] - half_patch_size:
+                    continue
+                patches_xy[offset] = rb[
+                    z,
+                    y - half_patch_size: y + half_patch_size + 1,
+                    x - half_patch_size: x + half_patch_size + 1]
+                patches_xz[offset] = rb[
+                    z - half_patch_size: z + half_patch_size + 1,
+                    y,
+                    x - half_patch_size: x + half_patch_size + 1]
+                patches_yz[offset] = rb[
+                    z - half_patch_size: z + half_patch_size + 1,
+                    y - half_patch_size: y + half_patch_size + 1,
+                    x]
+                points_out.append((z, y, x))
+                offset += 1
+    patches_xy, patches_xz, patches_yz = \
+        [_[:offset] for _ in (patches_xy, patches_xz, patches_yz)]
+    points_out = np.array(points_out)
     with h5py.File(args.output, "w") as f:
-        with shared_memory.txn() as m:
-            f.create_dataset("patches", data=m)
-            f.create_dataset("x", data=points_out[:, 0])
-            f.create_dataset("y", data=points_out[:, 1])
-            f.create_dataset("z", data=points_out[:, 2])
+        old_patches = f.create_dataset("patches_xy", data=patches_xy)
+        f.create_dataset("patches_xz", data=patches_xz)
+        f.create_dataset("patches_yz", data=patches_yz)
+        f.create_dataset("x", data=points_out[:, 0])
+        f.create_dataset("y", data=points_out[:, 1])
+        f.create_dataset("z", data=points_out[:, 2])
+        f["patches"] = old_patches
+
 
 if __name__ == "__main__":
     main()

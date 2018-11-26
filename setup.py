@@ -13,7 +13,8 @@ setup(
         "scikit-image"
     ],
     author="Kwanghun Chung Lab",
-    packages=["eflash_2018"],
+    packages=["eflash_2018",
+              "eflash_2018.utils"],
     entry_points=dict(console_scripts=[
         "find-pv-centers=eflash_2018.find_pv_centers:main",
         "detect-blobs=eflash_2018.detect_blobs:main",
