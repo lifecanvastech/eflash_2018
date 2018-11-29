@@ -7,8 +7,10 @@ setup(
     version=version,
     description="Software used in the EFlash paper",
     install_requires=[
-        "keras",
-        "tensorflow",
+        "h5py",
+        "matplotlib",
+        "phathom",
+        "scipy",
         "scikit-learn",
         "scikit-image"
     ],
@@ -16,7 +18,6 @@ setup(
     packages=["eflash_2018",
               "eflash_2018.utils"],
     entry_points=dict(console_scripts=[
-        "find-pv-centers=eflash_2018.find_pv_centers:main",
         "detect-blobs=eflash_2018.detect_blobs:main",
         "collect-patches=eflash_2018.collect_patches:main",
         "eflash-train=eflash_2018.train:main"
