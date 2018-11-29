@@ -96,7 +96,7 @@ def main():
                     z - half_patch_size: z + half_patch_size + 1,
                     y - half_patch_size: y + half_patch_size + 1,
                     x]
-                points_out.append((z, y, x))
+                points_out.append((x, y, z))
                 offset += 1
     patches_xy, patches_xz, patches_yz = \
         [_[:offset] for _ in (patches_xy, patches_xz, patches_yz)]

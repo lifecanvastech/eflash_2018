@@ -1,6 +1,6 @@
 import argparse
+import itertools
 import matplotlib
-import numpy as np
 import pickle
 matplotlib.use('Qt5Agg')
 import numpy as np
@@ -25,6 +25,9 @@ def parse_args():
     parser.add_argument("--output",
                         required=True,
                         help="The random forest model's pickle file")
+    parser.add_argument("--neuroglancer",
+                        help="The Neuroglancer image source, e.g. "
+                        "precomputed://http://localhost:9000")
     return parser.parse_args()
 
 
@@ -52,7 +55,7 @@ class MPLCanvas(FigureCanvas):
 
 class ApplicationWindow(QtWidgets.QMainWindow):
     def __init__(self, patches_xy, patches_xz, patches_yz,
-                 x, y, z, output_file):
+                 x, y, z, output_file, viewer):
         QtWidgets.QMainWindow.__init__(self)
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
         self.setWindowTitle("Train")
@@ -93,8 +96,20 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         self.main_widget = QtWidgets.QWidget(self)
 
         l = QtWidgets.QVBoxLayout(self.main_widget)
+        self.title_text = QtWidgets.QLabel()
+        l.addWidget(self.title_text)
         self.canvas = MPLCanvas(self.main_widget)
         l.addWidget(self.canvas)
+
+        self.unsure_text = QtWidgets.QLabel()
+        l.addWidget(self.unsure_text)
+        self.unsure_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.unsure_slider.setRange(0, 100)
+        self.unsure_slider.setTickInterval(10)
+        self.unsure_slider.setValue(50)
+        self.unsure_slider.valueChanged.connect(self.on_slider_change)
+        l.addWidget(self.unsure_slider)
+        self.update_unsure_text()
 
         self.main_widget.setFocus()
         self.setCentralWidget(self.main_widget)
@@ -108,6 +123,7 @@ class ApplicationWindow(QtWidgets.QMainWindow):
             [_.reshape(n_patches, n_features)
              for _ in (patches_xy, patches_xz, patches_yz)])
         self.x, self.y, self.z = x, y, z
+        self.viewer = viewer
         self.output_file = output_file
         if os.path.exists(self.output_file):
             with open(self.output_file, "rb") as fd:
@@ -119,13 +135,23 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                     self.predictions = d["predictions"]
                 if "pred_probs" in d:
                     self.pred_probs = d["pred_probs"]
+                self.pca_features = self.pca.transform(patches)
         else:
             self.marks = np.zeros(n_patches, np.int8)
             self.classifier = None
             self.pca = PCA(n_components=32)
-        self.pca_features = self.pca.fit_transform(patches)
+            self.pca_features = self.pca.fit_transform(patches)
         self.imageNext()
 
+    def get_unsure_cutoff_pct(self):
+        return self.unsure_slider.value()
+
+    def on_slider_change(self):
+        self.update_unsure_text()
+
+    def update_unsure_text(self):
+        self.unsure_text.setText(
+            "Unsure cutoff percent: %d" % self.get_unsure_cutoff_pct())
 
     def fileQuit(self):
         self.close()
@@ -139,7 +165,10 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                       classifier=self.classifier,
                       marks=self.marks,
                       predictions=self.predictions,
-                      pred_probs=self.pred_probs)
+                      pred_probs=self.pred_probs,
+                      x=self.x,
+                      y=self.y,
+                      z=self.z)
         with open(self.output_file, "wb") as fd:
             pickle.dump(object, fd)
         self.statusBar().showMessage("Saved to %s" % self.output_file)
@@ -166,9 +195,27 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         self.classifier = RandomForestClassifier(
             n_estimators=256,
             class_weight="balanced_subsample")
-        mask = self.marks != 0
-        self.classifier.fit(self.pca_features[mask],
-                            (self.marks[mask] + 1) // 2)
+        patches_xy = []
+        patches_xz = []
+        patches_yz = []
+        classes = []
+        for idx in np.where(self.marks != 0)[0]:
+            for pxy, pxz, pyz in augment(self.patches_xy[idx],
+                                         self.patches_xz[idx],
+                                         self.patches_yz[idx]):
+                patches_xy.append(pxy)
+                patches_xz.append(pxz)
+                patches_yz.append(pyz)
+                classes.append(0 if self.marks[idx] == -1 else 1)
+        n_patches = len(patches_xy)
+        n_features = np.prod(patches_xy[0].shape)
+        patches = np.hstack(
+            [np.array(_).reshape(n_patches, n_features)
+             for _ in (patches_xy, patches_xz, patches_yz)])
+        classes = np.array(classes)
+        pca_features = self.pca.transform(patches)
+
+        self.classifier.fit(pca_features, classes)
         self.statusBar().showMessage("Predicting...")
         self.predictions = self.classifier.predict(self.pca_features)
         self.pred_probs = self.classifier.predict_proba(self.pca_features)
@@ -183,6 +230,16 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         self.show_current()
 
     def show_current(self):
+        if self.classifier is not None:
+            self.title_text.setText(
+                "x=%d, y=%d, z=%d, prob=%.3f" %
+                (self.x[self.idx], self.y[self.idx], self.z[self.idx],
+                 self.pred_probs[self.idx, 1])
+            )
+        if self.viewer is not None:
+            with self.viewer.txn() as txn:
+                txn.position.voxel_coordinates = [
+                    self.x[self.idx], self.y[self.idx], self.z[self.idx]]
         self.canvas.show(self.patches_xy[self.idx],
                          self.patches_xz[self.idx],
                          self.patches_yz[self.idx])
@@ -211,7 +268,8 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                 "Hey, how about training a classifier with the \"T\" key?")
             return
         unmarked = np.where(self.marks == 0)[0]
-        order = np.argsort(np.abs(self.pred_probs[unmarked, 0] - .5))
+        unsure_cutoff = self.get_unsure_cutoff_pct() / 100
+        order = np.argsort(np.abs(self.pred_probs[unmarked, 1] - unsure_cutoff))
         idx = np.random.randint(0, min(len(order), max(len(order) // 100, 10 )))
         self.idx = unmarked[order[idx]]
         self.show_current()
@@ -221,6 +279,38 @@ class ApplicationWindow(QtWidgets.QMainWindow):
 
     def markNegative(self):
         self.marks[self.idx] = -1
+
+
+def augment(xy_patch, xz_patch, yz_patch):
+    """Return a sequence reflected and rotated patches
+
+    The Z direction is not symmetric - objects tend to have an anti-shadow
+    downward, so we leave that alone and also don't rotate in Z. Arguably,
+    there are more subtle artifacts in X and Y that would prevent you from
+    switching axes or from flipping directions, but it's probably more
+    worthwhile to train on the augmented set than not.
+
+    :param xy_patch:
+    :param xz_patch:
+    :param yz_patch:
+    :return: a sequence with reflected and rotated patches. Each element of
+    the sequence is a 3-tuple of patches.
+    """
+    identity_slice = slice(None)
+    reflect_slice = slice(None, None, -1)
+    result = []
+    for xs, ys, transpose in itertools.product(
+            (identity_slice, reflect_slice),
+            (identity_slice, reflect_slice),
+            (False, True)):
+        xy_patch_out = xy_patch[ys, xs]
+        xz_patch_out = xz_patch[:, xs]
+        yz_patch_out = yz_patch[:, ys]
+        if transpose:
+            xz_patch_out, yz_patch_out = yz_patch_out, xz_patch_out
+            xy_patch_out = xy_patch_out.transpose()
+        result.append((xy_patch_out, xz_patch_out, yz_patch_out))
+    return result
 
 
 def main():
@@ -233,8 +323,19 @@ def main():
         x = fd["x"][:]
         y = fd["y"][:]
         z = fd["z"][:]
+    if args.neuroglancer is None:
+        viewer = None
+    else:
+        import neuroglancer
+        import webbrowser
+        viewer = neuroglancer.Viewer()
+        with viewer.txn() as txn:
+            txn.layers["image"] = neuroglancer.ImageLayer(
+                source=args.neuroglancer
+            )
+        webbrowser.open_new(viewer.get_viewer_url())
     window = ApplicationWindow(patches_xy, patches_xz, patches_yz,
-                               x, y, z, args.output)
+                               x, y, z, args.output, viewer)
     window.setWindowTitle("Train")
     window.show()
     sys.exit(app.exec())
