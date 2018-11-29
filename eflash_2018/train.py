@@ -207,7 +207,8 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("Training...")
         self.classifier = RandomForestClassifier(
             n_estimators=256,
-            class_weight="balanced_subsample")
+            class_weight="balanced_subsample",
+            oob_score=True)
         patches_xy = []
         patches_xz = []
         patches_yz = []
@@ -232,7 +233,8 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("Predicting...")
         self.predictions = self.classifier.predict(self.pca_features)
         self.pred_probs = self.classifier.predict_proba(self.pca_features)
-        self.statusBar().showMessage("Training complete")
+        self.statusBar().showMessage("Training complete: oob error = %.3f" %
+                                     self.classifier.oob_score_)
 
     def imageNext(self):
         mask = np.where(self.marks == 0)[0]
