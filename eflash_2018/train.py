@@ -28,6 +28,19 @@ def parse_args():
     parser.add_argument("--neuroglancer",
                         help="The Neuroglancer image source, e.g. "
                         "precomputed://http://localhost:9000")
+    parser.add_argument("--port",
+                        type=int,
+                        help="HTTP port for neurglancer server",
+                        default=0)
+    parser.add_argument("--bind-address",
+                        help="The IP address to bind to as a webserver. "
+                        "The default is 127.0.0.1 which is constrained to "
+                        "the local machine.",
+                        default="127.0.0.1")
+    parser.add_argument("--static-content-source",
+                        default=None,
+                        help="The URL of the static content source, e.g. "
+                        "http://localhost:8080 if being served via npm.")
     return parser.parse_args()
 
 
@@ -328,7 +341,13 @@ def main():
     else:
         import neuroglancer
         import webbrowser
+        if args.static_content_source is not None:
+            neuroglancer.set_static_content_source(
+                url=args.static_content_source)
+        neuroglancer.set_server_bind_address(
+            args.bind_address, bind_port=args.port)
         viewer = neuroglancer.Viewer()
+        print("Neuroglancer URL: %s" % str(viewer))
         with viewer.txn() as txn:
             txn.layers["image"] = neuroglancer.ImageLayer(
                 source=args.neuroglancer
