@@ -61,6 +61,29 @@ def do_plane(filename:str,
             m[offset + idx] = plane[y0:y1, x0:x1]
 
 
+def do_z(pz, offset, patches_xy, patches_xz, patches_yz, rb, z,
+         half_patch_size):
+    for x, y in pz[:, :-1]:
+        x, y = int(x), int(y)
+        with patches_xy.txn() as m:
+            m[offset] = rb[
+                           z,
+                           y - half_patch_size: y + half_patch_size + 1,
+                           x - half_patch_size: x + half_patch_size + 1]
+        with patches_xz.txn() as m:
+            m[offset] = rb[
+                           z - half_patch_size: z + half_patch_size + 1,
+                           y,
+                           x - half_patch_size: x + half_patch_size + 1]
+        with patches_yz.txn() as m:
+            m[offset] = rb[
+                           z - half_patch_size: z + half_patch_size + 1,
+                           y - half_patch_size: y + half_patch_size + 1,
+                           x]
+        offset += 1
+    return offset
+
+
 def main():
     args = parse_args()
     source_files = sorted(glob.glob(args.source))
@@ -69,46 +92,52 @@ def main():
     patch_size = args.patch_size
     half_patch_size = patch_size // 2
     patches_xy, patches_xz, patches_yz = \
-        [np.zeros((len(points), patch_size, patch_size)) for _ in range(3)]
+        [SharedMemory((len(points), patch_size, patch_size), rb.dtype)
+         for _ in range(3)]
     points_out = []
     offset = 0
-    for z in tqdm.tqdm(
-            range(half_patch_size, len(source_files) - half_patch_size)):
-        rb.release(z - half_patch_size)
-        pz = points[(points[:, 2] >= z) & (points[:, 2] < z+1)]
-        if len(pz) > 0:
-            for x, y in pz[:, :-1]:
-                x, y = int(x), int(y)
-                if x < half_patch_size or \
-                    x >= rb.shape[2] - half_patch_size or \
-                    y < half_patch_size or \
-                    y >= rb.shape[1] - half_patch_size:
-                    continue
-                patches_xy[offset] = rb[
-                    z,
-                    y - half_patch_size: y + half_patch_size + 1,
-                    x - half_patch_size: x + half_patch_size + 1]
-                patches_xz[offset] = rb[
-                    z - half_patch_size: z + half_patch_size + 1,
-                    y,
-                    x - half_patch_size: x + half_patch_size + 1]
-                patches_yz[offset] = rb[
-                    z - half_patch_size: z + half_patch_size + 1,
-                    y - half_patch_size: y + half_patch_size + 1,
-                    x]
-                points_out.append((x, y, z))
-                offset += 1
-    patches_xy, patches_xz, patches_yz = \
-        [_[:offset] for _ in (patches_xy, patches_xz, patches_yz)]
-    points_out = np.array(points_out)
+    x1 = rb.shape[2] - half_patch_size
+    y1 = rb.shape[1] - half_patch_size
+    with multiprocessing.Pool(args.n_cores) as pool:
+        for z in tqdm.tqdm(
+                range(half_patch_size, len(source_files) - half_patch_size)):
+            rb.release(z - half_patch_size)
+            pz = points[(points[:, 2] >= z) & (points[:, 2] < z+1)]
+            if len(pz) == 0:
+                continue
+            mask = np.all(pz[:, 0:2] >= half_patch_size, 1) &\
+                   (pz[:, 0] < x1) &\
+                   (pz[:, 1] < y1)
+            pz = pz[mask]
+            if len(pz) == 0:
+                continue
+            points_out.append(pz)
+            if len(pz) < args.n_cores * 10 or args.n_cores == 1:
+                offset = do_z(pz, offset,
+                              patches_xy, patches_xz, patches_yz, rb, z,
+                              half_patch_size)
+            else:
+                idxs = np.linspace(0, len(pz), args.n_cores+1).astype(int)
+                args = [(pz[i0:i1], offset + i0,
+                         patches_xy, patches_xz, patches_yz, rb, z,
+                         half_patch_size)
+                        for i0, i1 in zip(idxs[:-1], idxs[1:])]
+                pool.starmap(do_z, args)
+                offset += len(pz)
+
+    points_out = np.vstack(points_out)
     with h5py.File(args.output, "w") as f:
-        old_patches = f.create_dataset("patches_xy", data=patches_xy)
-        f.create_dataset("patches_xz", data=patches_xz)
-        f.create_dataset("patches_yz", data=patches_yz)
+        with patches_xy.txn() as m:
+            old_patches = f.create_dataset("patches_xy", data=m[:offset])
+        with patches_xz.txn() as m:
+            f.create_dataset("patches_xz", data=m[:offset])
+        with patches_yz.txn() as m:
+            f.create_dataset("patches_yz", data=m[:offset])
         f.create_dataset("x", data=points_out[:, 0])
         f.create_dataset("y", data=points_out[:, 1])
         f.create_dataset("z", data=points_out[:, 2])
         f["patches"] = old_patches
+
 
 
 if __name__ == "__main__":

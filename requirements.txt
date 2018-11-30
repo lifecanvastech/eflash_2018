@@ -1,6 +1,5 @@
 h5py
 matplotlib
-git+https://github.com/chunglabmit/phathom.git
 pyqt5
 scipy
 scikit-learn
