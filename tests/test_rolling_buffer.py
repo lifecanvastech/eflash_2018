@@ -65,5 +65,13 @@ class TestRollingBuffer(unittest.TestCase):
                               lambda :rb[4, :, :])
 
 
+class TestFrozenRollingBuffer(unittest.TestCase):
+    def test_freeze(self):
+        with make_case((10, 10, 10)) as (rb, volume):
+            rb.wait(9)
+            frb = rb.freeze()
+            np.testing.assert_array_equal(frb[:, :, :], volume)\
+
+
 if __name__ == '__main__':
     unittest.main()

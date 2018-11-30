@@ -5,6 +5,7 @@
 import h5py
 import multiprocessing
 import numpy as np
+import os
 from phathom.utils import SharedMemory
 import tifffile
 import json
@@ -34,7 +35,12 @@ def parse_args():
                              "Y and Z coordinates of each of N points.")
     parser.add_argument("--n-cores",
                         default=12,
+                        type=int,
                         help="The number of cores to use")
+    parser.add_argument("--n-io-cores",
+                        default=12,
+                        type=int,
+                        help="The number of cores to use during I/O")
     return parser.parse_args()
 
 
@@ -87,7 +93,7 @@ def do_z(pz, offset, patches_xy, patches_xz, patches_yz, rb, z,
 def main():
     args = parse_args()
     source_files = sorted(glob.glob(args.source))
-    rb = RollingBuffer(source_files, args.n_cores)
+    rb = RollingBuffer(source_files, args.n_io_cores)
     points = np.array(json.load(open(args.points)))
     patch_size = args.patch_size
     half_patch_size = patch_size // 2
@@ -102,6 +108,7 @@ def main():
         for z in tqdm.tqdm(
                 range(half_patch_size, len(source_files) - half_patch_size)):
             rb.release(z - half_patch_size)
+            rb.wait(z + half_patch_size)
             pz = points[(points[:, 2] >= z) & (points[:, 2] < z+1)]
             if len(pz) == 0:
                 continue
@@ -118,11 +125,12 @@ def main():
                               half_patch_size)
             else:
                 idxs = np.linspace(0, len(pz), args.n_cores+1).astype(int)
-                args = [(pz[i0:i1], offset + i0,
-                         patches_xy, patches_xz, patches_yz, rb, z,
-                         half_patch_size)
-                        for i0, i1 in zip(idxs[:-1], idxs[1:])]
-                pool.starmap(do_z, args)
+                frb = rb.freeze()
+                fnargs = [(pz[i0:i1], offset + i0,
+                           patches_xy, patches_xz, patches_yz, frb, z,
+                           half_patch_size)
+                          for i0, i1 in zip(idxs[:-1], idxs[1:])]
+                pool.starmap(do_z, fnargs)
                 offset += len(pz)
 
     points_out = np.vstack(points_out)

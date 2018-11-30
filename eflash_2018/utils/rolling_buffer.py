@@ -1,3 +1,4 @@
+import abc
 from phathom.utils import SharedMemory
 import numpy as np
 import tifffile
@@ -14,7 +15,47 @@ def read_plane(sm:SharedMemory, filename:str):
         memory[:] = tifffile.imread(filename)
 
 
-class RollingBuffer:
+class RollingBufferBase:
+
+    def __init__(self):
+        self.x_extent = None
+        self.y_extent = None
+        self.z_extent = None
+        self.dtype = None
+        self.planes = None
+
+    @abc.abstractmethod
+    def wait(self, z):
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def release(self, z):
+        raise NotImplementedError()
+
+    @property
+    def shape(self):
+        return self.z_extent, self.y_extent, self.x_extent
+
+    def __getitem__(self, idxs):
+
+        assert (len(idxs) == 3), "The rolling buffer is a 3D array"
+        zidx = idxs[0]
+        if isinstance(zidx, slice):
+            start = 0 if zidx.start is None else zidx.start
+            stop = \
+                self.shape[0] if zidx.stop is None \
+                else self.shape[0] + zidx.stop if zidx.stop < 0 \
+                else zidx.stop
+            step = zidx.step if zidx.step is not None else 1
+            return np.array([
+                self[z, idxs[1], idxs[2]]
+                for z in range(start, stop, step)])
+        self.wait(zidx)
+        with self.planes[zidx].txn() as memory:
+            return memory[idxs[1], idxs[2]]
+
+
+class RollingBuffer(RollingBufferBase):
     """A rolling buffer of images
 
     The rolling buffer maintains a number of consecutive planes in a circular
@@ -32,6 +73,7 @@ class RollingBuffer:
         first_plane = tifffile.imread(files[0])
         self.x_extent = first_plane.shape[1]
         self.y_extent = first_plane.shape[0]
+        self.z_extent = len(files)
         self.dtype = first_plane.dtype
         self.z0 = 0
         self.z1 = 1
@@ -66,7 +108,7 @@ class RollingBuffer:
             )
             self.zfill = z_end
 
-    def _wait(self, z):
+    def wait(self, z):
         """Wait for plane Z to arrive
 
         :param z: The index of the plane to wait for
@@ -95,24 +137,28 @@ class RollingBuffer:
             self.free_memory.append(self.planes[z])
             self.planes[z] = None
 
-    @property
-    def shape(self):
-        return (len(self.files), self.y_extent, self.x_extent)
+    def freeze(self):
+        """Return a rolling buffer that's only valid between the current Z0 & Z1
 
-    def __getitem__(self, idxs):
+        :return: a rolling buffer that can be slice-indexed but nothing else
+        """
+        return FrozenRollingBuffer(self)
 
-        assert (len(idxs) == 3), "The rolling buffer is a 3D array"
-        zidx = idxs[0]
-        if isinstance(zidx, slice):
-            start = 0 if zidx.start is None else zidx.start
-            stop = \
-                self.shape[0] if zidx.stop is None \
-                else self.shape[0] + zidx.stop if zidx.stop < 0 \
-                else zidx.stop
-            step = zidx.step if zidx.step is not None else 1
-            return np.array([
-                self[z, idxs[1], idxs[2]]
-                for z in range(start, stop, step)])
-        self._wait(zidx)
-        with self.planes[zidx].txn() as memory:
-            return memory[idxs[1], idxs[2]]
+
+class FrozenRollingBuffer(RollingBufferBase):
+
+    def __init__(self, rb:RollingBuffer):
+        self.x_extent = rb.x_extent
+        self.y_extent = rb.y_extent
+        self.z_extent = rb.z_extent
+        self.planes = rb.planes.copy()
+        self.dtype = rb.dtype
+        self.z0 = rb.z0
+        self.z1 = rb.z1
+
+    def wait(self, z):
+        assert z >= self.z0
+        assert z < self.z1
+
+    def release(self, z):
+        pass
