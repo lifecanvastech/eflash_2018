@@ -110,12 +110,29 @@ Usage:
 ```text
 eflash-train \
     --patch-file <patch-file> \
-    --output <output>
+    --output <output> \
+    [--neuroglancer <image-source>] \
+    [--port <port>] \
+    [--bind-address <bind-address>] \
+    [--static-content-source <static-content-source>]
 ```
 
 where
 * **patch-file** is the name of the file produced by **collect-patches**
 * **output** is the name of the model file to be generated
+* **neuroglancer** is the name of a Neuroglancer data source, for instance,
+  "precomputed://http://localhost:81". This is optional, but if present,
+  **eflash-train** will present a Neuroglancer view and will reposition the
+   view at the current cell every time a new cell is selected.
+* **port** is the port number on which to launch the Neuroglancer view.
+  By default, any available port is selected.
+* **bind-address** is the IP address to bind Neuroglancer's listening
+  port to. By default, this is the loopback address, "localhost".
+* **static-content-source** is the static content source server URL for
+  Neuroglancer's assets. By default, this is the Neuroglancer demo server.
+  See 
+  [the neuroglancer documentation](https://github.com/google/neuroglancer/blob/master/python/README.md)
+  for details on the demo server. 
 
 The GUI has the following menu commands:
 * File
