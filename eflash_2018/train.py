@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import QShortcut
 from PyQt5.QtGui import QKeySequence
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-
+import tqdm
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -25,6 +25,16 @@ def parse_args():
     parser.add_argument("--output",
                         required=True,
                         help="The random forest model's pickle file")
+    parser.add_argument("--n-components",
+                        type=int,
+                        default=32,
+                        help="The number of components for the PCA "
+                        "dimensionality reduction.")
+    parser.add_argument("--max-samples",
+                        type=int,
+                        default=1000000,
+                        help="The maximum number of samples for PCA "
+                        "(subsample if there are more).")
     parser.add_argument("--neuroglancer",
                         help="The Neuroglancer image source, e.g. "
                         "precomputed://http://localhost:9000")
@@ -68,7 +78,7 @@ class MPLCanvas(FigureCanvas):
 
 class ApplicationWindow(QtWidgets.QMainWindow):
     def __init__(self, patches_xy, patches_xz, patches_yz,
-                 x, y, z, output_file, viewer):
+                 x, y, z, n_components, max_samples, output_file, viewer):
         QtWidgets.QMainWindow.__init__(self)
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
         self.setWindowTitle("Train")
@@ -126,6 +136,8 @@ class ApplicationWindow(QtWidgets.QMainWindow):
 
         self.main_widget.setFocus()
         self.setCentralWidget(self.main_widget)
+        icon_path = os.path.join(os.path.dirname(__file__), "training.png")
+        self.setWindowIcon(QtGui.QIcon(icon_path))
 
         self.patches_xy = patches_xy
         self.patches_xz = patches_xz
@@ -152,8 +164,20 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         else:
             self.marks = np.zeros(n_patches, np.int8)
             self.classifier = None
-            self.pca = PCA(n_components=32)
-            self.pca_features = self.pca.fit_transform(patches)
+            self.pca = PCA(n_components=n_components)
+            if len(patches) > max_samples:
+                idxs = np.random.choice(len(patches), max_samples,
+                                        replace=False)
+                self.pca.fit(patches[idxs])
+                self.pca_features = np.zeros((len(patches), n_components),
+                                             dtype=np.float32)
+                for idx0 in tqdm.tqdm(range(0, len(patches), max_samples),
+                                      desc="PCA transform"):
+                    idx1 = min(len(patches), idx0 + max_samples)
+                    self.pca_features[idx0:idx1] =\
+                        self.pca.transform(patches[idx0:idx1])
+            else:
+                self.pca_features = self.pca.fit_transform(patches)
         self.imageNext()
 
     def get_unsure_cutoff_pct(self):
@@ -356,7 +380,8 @@ def main():
             )
         webbrowser.open_new(viewer.get_viewer_url())
     window = ApplicationWindow(patches_xy, patches_xz, patches_yz,
-                               x, y, z, args.output, viewer)
+                               x, y, z, args.n_components,
+                               args.max_samples, args.output, viewer)
     window.setWindowTitle("Train")
     window.show()
     sys.exit(app.exec())

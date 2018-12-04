@@ -163,4 +163,7 @@ The user then retrains and classifies another 10-20 unsure patches.
 Periodically, the user can scan some representative patches classified as
 positive or negative using Image->Next Positive or Negative, verifying the
 accuracy by eye. Generally, too few images will be classified to calculate
-reasonable statistics for the model's accuracy, e.g. through out-of-bag error.  
+reasonable statistics for the model's accuracy, e.g. through out-of-bag error.
+
+###Credits
+training.png made by Freepik from www.flaticon.com  
