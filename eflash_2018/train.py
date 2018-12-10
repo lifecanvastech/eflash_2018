@@ -30,6 +30,9 @@ def parse_args():
                         default=32,
                         help="The number of components for the PCA "
                         "dimensionality reduction.")
+    parser.add_argument("--whiten",
+                        action="store_true",
+                        help="Normalize data in the PCA decomposition.")
     parser.add_argument("--max-samples",
                         type=int,
                         default=1000000,
@@ -83,7 +86,7 @@ class MPLCanvas(FigureCanvas):
 
 class ApplicationWindow(QtWidgets.QMainWindow):
     def __init__(self, patches_xy, patches_xz, patches_yz,
-                 x, y, z, n_components, max_samples, n_jobs,
+                 x, y, z, n_components, whiten, max_samples, n_jobs,
                  output_file, viewer):
         QtWidgets.QMainWindow.__init__(self)
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
@@ -165,8 +168,9 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                 d = pickle.load(fd)
                 self.marks = d["marks"]
                 self.pca = d["pca"]
-                if self.pca.n_components != n_components:
-                    self.train_pca(max_samples, n_components, patches)
+                if self.pca.n_components != n_components or\
+                        PCA.whiten != whiten:
+                    self.train_pca(max_samples, n_components, whiten, patches)
                 else:
                     self.classifier = d["classifier"]
                     if "predictions" in d:
@@ -182,12 +186,12 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                             self.pca.transform(patches[idx0:idx1])
         else:
             self.marks = np.zeros(n_patches, np.int8)
-            self.train_pca(max_samples, n_components, patches)
+            self.train_pca(max_samples, n_components, whiten, patches)
         self.imageNext()
 
-    def train_pca(self, max_samples, n_components, patches):
+    def train_pca(self, max_samples, n_components, whiten, patches):
         self.classifier = None
-        self.pca = PCA(n_components=n_components)
+        self.pca = PCA(n_components=n_components, whiten=whiten)
         if len(patches) > max_samples:
             idxs = np.random.choice(len(patches), max_samples,
                                     replace=False)
@@ -414,6 +418,7 @@ def main():
         webbrowser.open_new(viewer.get_viewer_url())
     window = ApplicationWindow(patches_xy, patches_xz, patches_yz,
                                x, y, z, args.n_components,
+                               args.whiten,
                                args.max_samples,
                                args.n_jobs, args.output, viewer)
     window.setWindowTitle("Train")
