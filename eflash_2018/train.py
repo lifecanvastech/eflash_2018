@@ -169,7 +169,7 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                 self.marks = d["marks"]
                 self.pca = d["pca"]
                 if self.pca.n_components != n_components or\
-                        PCA.whiten != whiten:
+                        self.pca.whiten != whiten:
                     self.train_pca(max_samples, n_components, whiten, patches)
                 else:
                     self.classifier = d["classifier"]
