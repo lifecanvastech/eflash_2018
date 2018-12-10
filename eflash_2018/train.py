@@ -163,38 +163,44 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         if os.path.exists(self.output_file):
             with open(self.output_file, "rb") as fd:
                 d = pickle.load(fd)
-                self.pca = d["pca"]
-                self.classifier = d["classifier"]
                 self.marks = d["marks"]
-                if "predictions" in d:
-                    self.predictions = d["predictions"]
-                if "pred_probs" in d:
-                    self.pred_probs = d["pred_probs"]
-                self.pca_features = np.zeros((len(patches), n_components),
-                                             dtype=np.float32)
-                for idx0 in tqdm.tqdm(range(0, len(patches), max_samples),
-                                      desc="PCA transform"):
-                    idx1 = min(len(patches), idx0 + max_samples)
-                    self.pca_features[idx0:idx1] =\
-                        self.pca.transform(patches[idx0:idx1])
+                self.pca = d["pca"]
+                if self.pca.n_components != n_components:
+                    self.train_pca(max_samples, n_components, patches)
+                else:
+                    self.classifier = d["classifier"]
+                    if "predictions" in d:
+                        self.predictions = d["predictions"]
+                    if "pred_probs" in d:
+                        self.pred_probs = d["pred_probs"]
+                    self.pca_features = np.zeros((len(patches), n_components),
+                                                 dtype=np.float32)
+                    for idx0 in tqdm.tqdm(range(0, len(patches), max_samples),
+                                          desc="PCA transform"):
+                        idx1 = min(len(patches), idx0 + max_samples)
+                        self.pca_features[idx0:idx1] =\
+                            self.pca.transform(patches[idx0:idx1])
         else:
             self.marks = np.zeros(n_patches, np.int8)
-            self.classifier = None
-            self.pca = PCA(n_components=n_components)
-            if len(patches) > max_samples:
-                idxs = np.random.choice(len(patches), max_samples,
-                                        replace=False)
-                self.pca.fit(patches[idxs])
-                self.pca_features = np.zeros((len(patches), n_components),
-                                             dtype=np.float32)
-                for idx0 in tqdm.tqdm(range(0, len(patches), max_samples),
-                                      desc="PCA transform"):
-                    idx1 = min(len(patches), idx0 + max_samples)
-                    self.pca_features[idx0:idx1] =\
-                        self.pca.transform(patches[idx0:idx1])
-            else:
-                self.pca_features = self.pca.fit_transform(patches)
+            self.train_pca(max_samples, n_components, patches)
         self.imageNext()
+
+    def train_pca(self, max_samples, n_components, patches):
+        self.classifier = None
+        self.pca = PCA(n_components=n_components)
+        if len(patches) > max_samples:
+            idxs = np.random.choice(len(patches), max_samples,
+                                    replace=False)
+            self.pca.fit(patches[idxs])
+            self.pca_features = np.zeros((len(patches), n_components),
+                                         dtype=np.float32)
+            for idx0 in tqdm.tqdm(range(0, len(patches), max_samples),
+                                  desc="PCA transform"):
+                idx1 = min(len(patches), idx0 + max_samples)
+                self.pca_features[idx0:idx1] = \
+                    self.pca.transform(patches[idx0:idx1])
+        else:
+            self.pca_features = self.pca.fit_transform(patches)
 
     def get_unsure_cutoff_pct(self):
         return self.unsure_slider.value()
