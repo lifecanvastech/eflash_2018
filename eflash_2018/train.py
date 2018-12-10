@@ -51,6 +51,11 @@ def parse_args():
                         default=None,
                         help="The URL of the static content source, e.g. "
                         "http://localhost:8080 if being served via npm.")
+    parser.add_argument("--n-jobs",
+                        type=int,
+                        default=-1,
+                        help="How many simultaneous jobs to run while training "
+                        "or predicting with the random forest.")
     return parser.parse_args()
 
 
@@ -78,7 +83,8 @@ class MPLCanvas(FigureCanvas):
 
 class ApplicationWindow(QtWidgets.QMainWindow):
     def __init__(self, patches_xy, patches_xz, patches_yz,
-                 x, y, z, n_components, max_samples, output_file, viewer):
+                 x, y, z, n_components, max_samples, n_jobs,
+                 output_file, viewer):
         QtWidgets.QMainWindow.__init__(self)
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
         self.setWindowTitle("Train")
@@ -101,6 +107,7 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         self.image_menu.addAction("Next &Positive", self.imageNextPositive)
         self.image_menu.addAction("Next &Negative", self.imageNextNegative)
         self.image_menu.addAction("Next &Unsure", self.imageNextUnsure)
+        self.image_menu.addAction("&Go to", self.imageGoTo)
         self.menuBar().addMenu(self.image_menu)
         self.next_shortcut = QShortcut(QKeySequence("X"), self)
         self.next_shortcut.activated.connect(self.imageNext)
@@ -110,6 +117,8 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         self.next_negative_shortcut.activated.connect(self.imageNextNegative)
         self.next_unsure_shortcut = QShortcut(QKeySequence("U"), self)
         self.next_unsure_shortcut.activated.connect(self.imageNextUnsure)
+        self.next_go_to_shortcut = QShortcut(QKeySequence("G"), self)
+        self.next_go_to_shortcut.activated.connect(self.imageGoTo)
 
         self.mark_menu = QtWidgets.QMenu("&Mark", self)
         self.mark_menu.addAction("&Positive", self.markPositive)
@@ -148,6 +157,7 @@ class ApplicationWindow(QtWidgets.QMainWindow):
             [_.reshape(n_patches, n_features)
              for _ in (patches_xy, patches_xz, patches_yz)])
         self.x, self.y, self.z = x, y, z
+        self.n_jobs = n_jobs
         self.viewer = viewer
         self.output_file = output_file
         if os.path.exists(self.output_file):
@@ -160,7 +170,13 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                     self.predictions = d["predictions"]
                 if "pred_probs" in d:
                     self.pred_probs = d["pred_probs"]
-                self.pca_features = self.pca.transform(patches)
+                self.pca_features = np.zeros((len(patches), n_components),
+                                             dtype=np.float32)
+                for idx0 in tqdm.tqdm(range(0, len(patches), max_samples),
+                                      desc="PCA transform"):
+                    idx1 = min(len(patches), idx0 + max_samples)
+                    self.pca_features[idx0:idx1] =\
+                        self.pca.transform(patches[idx0:idx1])
         else:
             self.marks = np.zeros(n_patches, np.int8)
             self.classifier = None
@@ -232,7 +248,8 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         self.classifier = RandomForestClassifier(
             n_estimators=256,
             class_weight="balanced_subsample",
-            oob_score=True)
+            oob_score=True,
+            n_jobs = self.n_jobs)
         patches_xy = []
         patches_xz = []
         patches_yz = []
@@ -313,6 +330,16 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         self.idx = unmarked[order[idx]]
         self.show_current()
 
+    def imageGoTo(self):
+        with self.viewer.txn() as txn:
+            coordinates = txn.voxel_coordinates
+            distances = np.sum(np.square(
+                np.column_stack((self.x, self.y, self.z)) -
+                np.array(coordinates).reshape(1, 3)), 1)
+            min_idx = np.argmin(distances)
+        self.idx = min_idx
+        self.show_current()
+
     def markPositive(self):
         self.marks[self.idx] = 1
 
@@ -381,7 +408,8 @@ def main():
         webbrowser.open_new(viewer.get_viewer_url())
     window = ApplicationWindow(patches_xy, patches_xz, patches_yz,
                                x, y, z, args.n_components,
-                               args.max_samples, args.output, viewer)
+                               args.max_samples,
+                               args.n_jobs, args.output, viewer)
     window.setWindowTitle("Train")
     window.show()
     sys.exit(app.exec())
