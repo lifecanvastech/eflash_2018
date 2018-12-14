@@ -20,6 +20,7 @@ setup(
     entry_points=dict(console_scripts=[
         "detect-blobs=eflash_2018.detect_blobs:main",
         "collect-patches=eflash_2018.collect_patches:main",
-        "eflash-train=eflash_2018.train:main"
+        "eflash-train=eflash_2018.train:main",
+        "eflash-display=eflash_2018.ngdisplay_ui:main"
     ])
 )
