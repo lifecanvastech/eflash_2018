@@ -343,7 +343,7 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                     for minipatch in (pxy, pxz, pyz):
                         patches[row_idx, col_idx:col_idx+self.patch_len] = \
                             minipatch.flatten()
-                        col_idx += self.patch_len * 2
+                        col_idx += self.patch_len * self.n_channels
             for _ in range(n_augment):
                 classes.append(0 if self.marks[idx] == -1 else 1)
         classes = np.array(classes)
