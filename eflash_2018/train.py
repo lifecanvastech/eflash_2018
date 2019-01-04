@@ -514,10 +514,10 @@ def main():
             args.bind_address, bind_port=args.port)
         viewer = neuroglancer.Viewer()
         print("Neuroglancer URL: %s" % str(viewer))
-        image_names = args.image_name
+        image_names = args.image_name or []
         while len(image_names) < len(args.neuroglancer):
             image_names.append("image_%d" % (len(image_names) + 1))
-        colors = args.color
+        colors = args.color or []
         ckeys = list(COLORS.keys())
         while len(colors) < len(args.neuroglancer):
             for color in ckeys:
@@ -526,7 +526,7 @@ def main():
                     break
             else:
                 colors.append(ckeys[len(colors) % len(COLORS)])
-        multiplier = args.multiplier
+        multiplier = args.multiplier or []
         while len(multiplier) < len(args.neuroglancer):
             multiplier.append(1.0)
 
