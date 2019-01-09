@@ -14,6 +14,11 @@ import glob
 import tqdm
 from .utils import RollingBuffer
 
+try:
+    import mkl
+    mkl.set_num_threads(1)
+except:
+    pass
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -105,9 +110,12 @@ def main():
     x1 = rb.shape[2] - half_patch_size
     y1 = rb.shape[1] - half_patch_size
     with multiprocessing.Pool(args.n_cores) as pool:
-        for z in tqdm.tqdm(
-                range(half_patch_size, len(source_files) - half_patch_size)):
+        it = tqdm.tqdm(
+                range(half_patch_size, len(source_files) - half_patch_size))
+        for z in it:
+            it.set_description("Releasing @ %d" % (z - half_patch_size))
             rb.release(z - half_patch_size)
+            it.set_description("Waiting for %d" % (z + half_patch_size))
             rb.wait(z + half_patch_size)
             pz = points[(points[:, 2] >= z) & (points[:, 2] < z+1)]
             if len(pz) == 0:
@@ -125,11 +133,13 @@ def main():
                               half_patch_size)
             else:
                 idxs = np.linspace(0, len(pz), args.n_cores+1).astype(int)
+                it.set_description("Freezing buffer")
                 frb = rb.freeze()
                 fnargs = [(pz[i0:i1], offset + i0,
                            patches_xy, patches_xz, patches_yz, frb, z,
                            half_patch_size)
                           for i0, i1 in zip(idxs[:-1], idxs[1:])]
+                it.set_description("Processing %d patches @ %d" % (len(pz), z))
                 pool.starmap(do_z, fnargs)
                 offset += len(pz)
 
