@@ -33,6 +33,11 @@ def parse_arguments():
                         type=float,
                         default=3,
                         help="Minimum distance between blobs")
+    parser.add_argument("--invert",
+                        action="store_true",
+                        help="Invert the intensity of the difference of "
+                        "Gaussians in order to find dark centers (e.g. in "
+                        "the nuclei of a cytoplasmic stain)")
     parser.add_argument("--block-size-xy",
                         type=int,
                         default=1024,
@@ -60,7 +65,7 @@ def read_plane(stackmem, filename, offset):
 
 def do_dog(imgmem, dog_low, dog_high,
            x0, x1, y0, y1, z0, z1, x0p, x1p, y0p, y1p, z0p, z1p,
-           min_distance, threshold):
+           min_distance, threshold, invert):
     imd = int(np.ceil(min_distance))
     structure = np.sum(
         np.square(np.mgrid[-imd:imd+1, -imd:imd+1, -imd:imd+1]), 0) <= \
@@ -69,6 +74,8 @@ def do_dog(imgmem, dog_low, dog_high,
         mini_img = img[:, y0p:y1p, x0p:x1p].astype(np.float32)
         dog = ndi.gaussian_filter(mini_img, dog_low) - \
                ndi.gaussian_filter(mini_img, dog_high)
+        if invert:
+            dog = -dog
         zc, yc, xc = np.where(dog == ndi.grey_dilation(
             dog, footprint=structure))
         zca = zc + z0p
@@ -119,7 +126,7 @@ def main():
                     (img_mem, args.dog_low, args.dog_high,
                      x0a[xi], x1a[xi], y0a[yi], y1a[yi], z0, z1,
                      x0p[xi], x1p[xi], y0p[yi], y1p[yi], z0p, z1p,
-                     args.min_distance, args.threshold)
+                     args.min_distance, args.threshold, args.invert)
                 ))
             for future in tqdm.tqdm(futures, desc="Computing"):
                 points.append(future.get())
