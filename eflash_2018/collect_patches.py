@@ -5,8 +5,9 @@
 import h5py
 import multiprocessing
 import numpy as np
-import pickle
+import os
 from phathom.utils import SharedMemory
+import tifffile
 import json
 import argparse
 import glob
@@ -45,52 +46,30 @@ def parse_args():
                         default=12,
                         type=int,
                         help="The number of cores to use during I/O")
-    parser.add_argument("--model",
-                        help="Model file for filtering patches.")
-    parser.add_argument("--threshold",
-                        default=.5,
-                        type=float,
-                        help="Threshold for filtering patches using model.")
     return parser.parse_args()
 
-classifier = None
-pca = None
 
-def filter_z(pz, rb, z, half_patch_size, threshold):
-    """Filter using a model
-
-    :param pz: An array of the x, y and z center coordinates (in that order)
-    :param rb: the rolling buffer
-    :param z: the current Z center
-    :param half_patch_size: 1/2 of the size of a patch
-    :param pca: the PCA class for dimensionality reduction
-    :param classifier: the random-forest classifier
-    :param threshold: everything at or above this threshold passes.
-    :returns: a sequence of indices that passes
+def do_plane(filename:str,
+             points:np.ndarray,
+             shared_memory:SharedMemory,
+             offset:int):
     """
-    all_patches = None
-    for idx, (x, y) in enumerate(pz[:, :-1]):
-        x, y = int(x), int(y)
-        patch_xy = rb[
-                       z,
-                       y - half_patch_size: y + half_patch_size + 1,
-                       x - half_patch_size: x + half_patch_size + 1]
-        patch_xz = rb[
-                           z - half_patch_size: z + half_patch_size + 1,
-                           y,
-                           x - half_patch_size: x + half_patch_size + 1]
-        patch_yz = rb[
-                           z - half_patch_size: z + half_patch_size + 1,
-                           y - half_patch_size: y + half_patch_size + 1,
-                           x]
-        patches = np.hstack([patch_xy.flatten(),
-                          patch_xz.flatten(),
-                          patch_yz.flatten()])
-        if all_patches is None:
-            all_patches = np.zeros((len(pz), len(patches)), patches.dtype)
-        all_patches[idx] = patches
-    features = pca.transform(all_patches)
-    return np.where(classifier.predict_proba(features)[:, 1] >= threshold)[0]
+
+    :param filename: name of file to parse
+    :param points: an N x 2 array of X, Y points at which to sample
+    :param shared_memory: Shared memory block to write into
+    :param offset: offset into block
+    """
+    patch_size = shared_memory.shape[1]
+    half_size = patch_size // 2
+    plane = np.pad(tifffile.imread(filename), half_size, mode='reflect')
+    for idx, (x, y) in enumerate(points):
+        x0 = x
+        x1 = x + patch_size
+        y0 = y
+        y1 = y + patch_size
+        with shared_memory.txn() as m:
+            m[offset + idx] = plane[y0:y1, x0:x1]
 
 
 def do_z(pz, offset, patches_xy, patches_xz, patches_yz, rb, z,
@@ -117,14 +96,7 @@ def do_z(pz, offset, patches_xy, patches_xz, patches_yz, rb, z,
 
 
 def main():
-    global classifier
-    global pca
     args = parse_args()
-    if args.model is not None:
-        with open(args.model, "rb") as fd:
-            model = pickle.load(fd)
-            classifier = model["classifier"]
-            pca = model["pca"]
     source_files = sorted(glob.glob(args.source))
     rb = RollingBuffer(source_files, args.n_io_cores)
     points = np.array(json.load(open(args.points)))
@@ -154,10 +126,8 @@ def main():
             pz = pz[mask]
             if len(pz) == 0:
                 continue
+            points_out.append(pz)
             if len(pz) < args.n_cores * 10 or args.n_cores == 1:
-                if args.model is not None:
-                    idxs = filter_z(pz, rb, z, half_patch_size, args.threshold)
-                    pz = pz[idxs]
                 offset = do_z(pz, offset,
                               patches_xy, patches_xz, patches_yz, rb, z,
                               half_patch_size)
@@ -165,30 +135,13 @@ def main():
                 idxs = np.linspace(0, len(pz), args.n_cores+1).astype(int)
                 it.set_description("Freezing buffer")
                 frb = rb.freeze()
-                if args.model is not None:
-                    it.set_description("Filtering %d patches" % len(pz))
-                    fnargs = [
-                        (pz[i0:i1], frb, z, half_patch_size, args.threshold)
-                        for i0, i1 in zip(idxs[:-1], idxs[1:])]
-                    fidxs = pool.starmap(filter_z, fnargs)
-                    pzidx = np.hstack(fidxs)
-                    if len(pzidx) == 0:
-                        continue
-                    pz = pz[pzidx]
-                    if len(pz) < args.n_cores:
-                        idxs = np.arange(len(pz) + 1)
-                    else:
-                        idxs = np.linspace(0, len(pz), args.n_cores+1).astype(int)
-                cumsum = np.hstack([[0], np.cumsum([len(_) for _ in fidxs])])
                 fnargs = [(pz[i0:i1], offset + i0,
                            patches_xy, patches_xz, patches_yz, frb, z,
                            half_patch_size)
                           for i0, i1 in zip(idxs[:-1], idxs[1:])]
                 it.set_description("Processing %d patches @ %d" % (len(pz), z))
                 pool.starmap(do_z, fnargs)
-                offset += cumsum[-1]
-                pz = pz[np.hstack(fidxs)]
-            points_out.append(pz)
+                offset += len(pz)
 
     points_out = np.vstack(points_out)
     with h5py.File(args.output, "w") as f:
@@ -202,6 +155,7 @@ def main():
         f.create_dataset("y", data=points_out[:, 1])
         f.create_dataset("z", data=points_out[:, 2])
         f["patches"] = old_patches
+
 
 
 if __name__ == "__main__":
