@@ -174,6 +174,8 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         self.mark_menu = QtWidgets.QMenu("&Mark", self)
         self.mark_menu.addAction("&Positive", self.markPositive)
         self.mark_menu.addAction("&Negative", self.markNegative)
+        self.mark_menu.addAction("&Undo", self.markUndo,
+                                 QtCore.Qt.CTRL + QtCore.Qt.Key_Z)
         self.menuBar().addMenu(self.mark_menu)
 
         self.main_widget = QtWidgets.QWidget(self)
@@ -248,6 +250,7 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         else:
             self.marks = np.zeros(n_patches, np.int8)
             self.train_pca(max_samples, n_components, whiten, patches)
+        self.undo_stack = []
         self.imageNext()
 
     def train_pca(self, max_samples, n_components, whiten, patches):
@@ -443,9 +446,19 @@ class ApplicationWindow(QtWidgets.QMainWindow):
 
     def markPositive(self):
         self.marks[self.idx] = 1
+        self.undo_stack.append(self.idx)
 
     def markNegative(self):
         self.marks[self.idx] = -1
+        self.undo_stack.append(self.idx)
+
+    def markUndo(self):
+        if len(self.undo_stack) == 0:
+            self.statusBar().showMessage("Nothing to undo")
+            return
+        self.idx = self.undo_stack.pop()
+        self.marks[self.idx] = 0
+        self.show_current()
 
 
 def augment(xy_patch, xz_patch, yz_patch):
