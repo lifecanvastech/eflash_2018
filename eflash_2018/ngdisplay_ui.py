@@ -3,6 +3,8 @@ import json
 import neuroglancer
 import numpy as np
 from nuggt.utils.ngutils import *
+from nuggt.point_annotator import PointAnnotator
+import os
 from PyQt5 import QtCore, QtWidgets, QtGui
 from PyQt5.QtWidgets import QShortcut
 from PyQt5.QtGui import QKeySequence
@@ -31,6 +33,14 @@ class ApplicationWindow(QtWidgets.QMainWindow):
     def __init__(self, viewer):
         QtWidgets.QMainWindow.__init__(self)
         self.viewer = viewer
+        self.point_annotator = PointAnnotator(viewer)
+        self.x0 = None
+        self.x1 = None
+        self.y0 = None
+        self.y1 = None
+        self.z0 = None
+        self.z1 = None
+        self.points_file = None
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
         self.setWindowTitle("Neuroglancer display")
         self.file_menu = QtWidgets.QMenu('&File', self)
@@ -55,6 +65,11 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         self.points_file_browse_button.clicked.connect(
             self.on_points_file_browse)
         hl.addWidget(self.points_file_browse_button)
+        self.points_file_save_button = QtWidgets.QPushButton(text="Save...")
+        self.points_file_save_button.clicked.connect(
+            self.on_points_file_save
+        )
+        hl.addWidget(self.points_file_save_button)
         #
         # Neuroglancer data source
         #
@@ -119,17 +134,51 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         filter="Coordinates (*.json);;All files (*)")
         self.points_file_widget.setText(filename)
 
+    def on_points_file_save(self):
+        if self.x0 is not None:
+            self.replace_points()
+        filename = self.points_file_widget.text()
+
+        if os.path.exists(filename):
+            msg = QtWidgets.QMessageBox.question(
+                self, "Overwriting file",
+                "Are you sure you want to overwrite %s?" %
+                os.path.split(filename)[1])
+            if msg != QtWidgets.QMessageBox.Yes:
+                return
+        with open(filename, "w") as fd:
+            json.dump(self.all_points.tolist(), fd)
+        self.points_file = filename
+
     def on_update_display(self):
         points_file = self.points_file_widget.text()
-        try:
-            with open(points_file, "r") as fd:
-                points = np.array(json.load(fd))
-        except IOError:
-            QtWidgets.QErrorMessage("Could not open %s" % points_file)
-            return
-        except json.JSONDecodeError:
-            QtWidgets.QErrorMessage(
-                "%s could not be read as a JSON file" % points_file)
+        if points_file == self.points_file:
+            replace = True
+        else:
+            try:
+                with open(points_file, "r") as fd:
+                    self.all_points = np.array(json.load(fd))
+                self.points_file = points_file
+                replace = False
+            except IOError:
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "I/O Error",
+                    "Could not open %s" % points_file)
+                return
+            except json.JSONDecodeError:
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "I/O Error",
+                    "%s could not be read as a JSON file" % points_file)
+                return
+            except UnicodeDecodeError:
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "I/O Error",
+                    "%s could not be read as a JSON file" % points_file)
+                return
+
         try:
             x0 = int(self.coord_widgets["x0"].text())
             x1 = int(self.coord_widgets["x1"].text())
@@ -140,10 +189,10 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         except ValueError:
             QtWidgets.QErrorMessage("Coordinates must be integers")
             return
-        idxs = np.where((points[:, 0] >= x0) & (points[:, 0] < x1) &
-                        (points[:, 1] >= y0) & (points[:, 1] < y1) &
-                        (points[:, 2] >= z0) & (points[:, 2] < z1))[0]
-        points = points[idxs]
+        self.update_points(x0, x1, y0, y1, z0, z1, replace=replace)
+        self.x0, self.x1 = x0, x1
+        self.y0, self.y1 = y0, y1
+        self.z0, self.z1 = z0, z1
         shader_txt = self.shader_widget.currentText()
         if shader_txt == "gray":
             shader = gray_shader
@@ -165,8 +214,30 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                 source=self.neuroglancer_source_widget.text(),
                 shader= shader % intensity
             )
-            pointlayer(txn, "points", points[:, 0], points[:, 1], points[:, 2],
-                       "yellow")
+
+    def update_points(self, x0, x1, y0, y1, z0, z1, replace):
+        if replace:
+            self.replace_points()
+
+        idxs = np.where(
+            (self.all_points[:, 0] >= x0) & (self.all_points[:, 0] < x1) &
+            (self.all_points[:, 1] >= y0) & (self.all_points[:, 1] < y1) &
+            (self.all_points[:, 2] >= z0) & (self.all_points[:, 2] < z1))[0]
+        self.point_annotator.set_points(self.all_points[idxs])
+
+    def replace_points(self):
+        idxs = np.where(
+            (self.all_points[:, 0] >= self.x0) &
+            (self.all_points[:, 0] < self.x1) &
+            (self.all_points[:, 1] >= self.y0) &
+            (self.all_points[:, 1] < self.y1) &
+            (self.all_points[:, 2] >= self.z0) &
+            (self.all_points[:, 2] < self.z1))[0]
+        self.all_points = np.vstack((
+            np.delete(self.all_points, idxs, 0),
+            self.point_annotator.all_points
+        ))
+
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
