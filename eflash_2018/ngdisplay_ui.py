@@ -71,16 +71,6 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         )
         hl.addWidget(self.points_file_save_button)
         #
-        # Neuroglancer data source
-        #
-        hl = QtWidgets.QHBoxLayout()
-        hls.append(hl)
-        hl.addWidget(QtWidgets.QLabel(text="Neuroglancer source:"))
-        self.neuroglancer_source_widget = QtWidgets.QLineEdit()
-        self.neuroglancer_source_widget.setText(
-            "precomputed://http://leviathan-chunglab.mit.edu:???")
-        hl.addWidget(self.neuroglancer_source_widget)
-        #
         # X0, X1, Y0, Y1, Z0, Z1
         #
         self.coord_widgets = {}
@@ -93,6 +83,19 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                 self.coord_widgets[label] = QtWidgets.QLineEdit()
                 self.coord_widgets[label].setText("0")
                 hl.addWidget(self.coord_widgets[label])
+        #
+        # Neuroglancer data source
+        #
+        hl = QtWidgets.QHBoxLayout()
+        hls.append(hl)
+        hl.addWidget(QtWidgets.QLabel(text="Neuroglancer source:"))
+        self.neuroglancer_source_widget = QtWidgets.QLineEdit()
+        self.neuroglancer_source_widget.setText(
+            "precomputed://http://leviathan-chunglab.mit.edu/precomputed/???")
+        hl.addWidget(self.neuroglancer_source_widget)
+        #
+        # Shader config for first source
+        #
         hl = QtWidgets.QHBoxLayout()
         hls.append(hl)
         hl.addWidget(QtWidgets.QLabel(text="Intensity: "))
@@ -107,6 +110,36 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                                      "cubehelix"])
         self.shader_widget.setCurrentIndex(4)
         #
+        # Second Neuroglancer source
+        #
+        hl = QtWidgets.QHBoxLayout()
+        hls.append(hl)
+        self.use_neuroglancer_second_source_widget = QtWidgets.QCheckBox(
+            "Neuroglancer source #2")
+        hl.addWidget(self.use_neuroglancer_second_source_widget)
+        self.neuroglancer_second_source_widget = QtWidgets.QLineEdit()
+        self.neuroglancer_second_source_widget.setText(
+            "precomputed://http://leviathan-chunglab.mit.edu/precomputed/???")
+        hl.addWidget(self.neuroglancer_second_source_widget)
+        #
+        # Shader for second source
+        #
+        hl = QtWidgets.QHBoxLayout()
+        hls.append(hl)
+        hl.addWidget(QtWidgets.QLabel(text="Intensity: "))
+        self.second_intensity_widget = QtWidgets.QLineEdit("40.0")
+        hl.addWidget(self.second_intensity_widget)
+        self.second_shader_widget = QtWidgets.QComboBox()
+        hl.addWidget(self.second_shader_widget)
+        self.second_shader_widget.addItems([
+            "gray",
+            "red",
+            "green",
+            "blue",
+            "cubehelix"])
+        self.second_shader_widget.setCurrentIndex(2)
+
+        #
         # Display button
         #
         hl = QtWidgets.QHBoxLayout()
@@ -120,7 +153,6 @@ class ApplicationWindow(QtWidgets.QMainWindow):
             l.addLayout(hl)
         self.main_widget.setFocus()
         self.setCentralWidget(self.main_widget)
-
 
     def fileQuit(self):
         self.close()
@@ -214,6 +246,32 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                 source=self.neuroglancer_source_widget.text(),
                 shader= shader % intensity
             )
+            if self.use_neuroglancer_second_source_widget.isChecked():
+                shader_txt = self.second_shader_widget.currentText()
+                if shader_txt == "gray":
+                    shader = gray_shader
+                elif shader_txt == "red":
+                    shader = red_shader
+                elif shader_txt == "green":
+                    shader = green_shader
+                elif shader_txt == "blue":
+                    shader = blue_shader
+                else:
+                    shader = cubehelix_shader
+                try:
+                    intensity = float(self.second_intensity_widget.text())
+                except ValueError:
+                    QtWidgets.QErrorMessage("Intensity must be a number")
+                    return
+                txn.layers["image-2"] = neuroglancer.ImageLayer(
+                    source=self.neuroglancer_second_source_widget.text(),
+                    shader = shader % intensity
+                )
+            else:
+                for i, layer in enumerate(txn.layers):
+                    if layer.name == "image-2":
+                        del txn.layers[i]
+                        break
 
     def update_points(self, x0, x1, y0, y1, z0, z1, replace):
         if replace:
@@ -223,7 +281,10 @@ class ApplicationWindow(QtWidgets.QMainWindow):
             (self.all_points[:, 0] >= x0) & (self.all_points[:, 0] < x1) &
             (self.all_points[:, 1] >= y0) & (self.all_points[:, 1] < y1) &
             (self.all_points[:, 2] >= z0) & (self.all_points[:, 2] < z1))[0]
-        self.point_annotator.set_points(self.all_points[idxs])
+        if len(idxs) == 0:
+            self.point_annotator.set_points(np.zeros((0, 3)))
+        else:
+            self.point_annotator.set_points(self.all_points[idxs])
 
     def replace_points(self):
         idxs = np.where(
