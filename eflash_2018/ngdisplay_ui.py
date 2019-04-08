@@ -91,7 +91,7 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         hl.addWidget(QtWidgets.QLabel(text="Neuroglancer source:"))
         self.neuroglancer_source_widget = QtWidgets.QLineEdit()
         self.neuroglancer_source_widget.setText(
-            "precomputed://http://leviathan-chunglab.mit.edu/precomputed/???")
+            "precomputed://https://leviathan-chunglab.mit.edu/precomputed/???")
         hl.addWidget(self.neuroglancer_source_widget)
         #
         # Shader config for first source
