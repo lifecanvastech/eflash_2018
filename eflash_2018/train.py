@@ -43,6 +43,11 @@ def parse_args():
                         default=32,
                         help="The number of components for the PCA "
                         "dimensionality reduction.")
+    parser.add_argument("--use-position",
+                        help="Add the X, Y and Z location of a putative cell "
+                        "to the feature vector to allow the classifier to use "
+                        "position in the decision process.",
+                        action="store_true")
     parser.add_argument("--whiten",
                         action="store_true",
                         help="Normalize data in the PCA decomposition.")
@@ -126,7 +131,8 @@ class MPLCanvas(FigureCanvas):
 
 class ApplicationWindow(QtWidgets.QMainWindow):
     def __init__(self, patches_xy, patches_xz, patches_yz,
-                 x, y, z, n_components, whiten, max_samples, n_jobs,
+                 x, y, z, n_components, use_position,
+                 whiten, max_samples, n_jobs,
                  output_file, viewer, image_names, multipliers, shaders):
         QtWidgets.QMainWindow.__init__(self)
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
@@ -210,6 +216,7 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         n_features = self.n_channels * self.patch_len * 3
         self.n_patches = n_patches
         self.n_features = n_features
+        self.use_position = use_position
 
         patches = []
         for p in (patches_xy, patches_xz, patches_yz):
@@ -247,6 +254,9 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                         idx1 = min(len(patches), idx0 + max_samples)
                         self.pca_features[idx0:idx1] =\
                             self.pca.transform(patches[idx0:idx1])
+                    self.augmented_features = self.augment_features(
+                        self.pca_features)
+
         else:
             self.marks = np.zeros(n_patches, np.int8)
             self.train_pca(max_samples, n_components, whiten, patches)
@@ -269,6 +279,8 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                     self.pca.transform(patches[idx0:idx1])
         else:
             self.pca_features = self.pca.fit_transform(patches)
+        self.augmented_features = self.augment_features(
+            self.pca_features)
 
     def get_unsure_cutoff_pct(self):
         return self.unsure_slider.value()
@@ -335,6 +347,7 @@ class ApplicationWindow(QtWidgets.QMainWindow):
         patches = np.zeros((n_patches, self.n_features),
                            self.patches_xy[0].dtype)
         classes = []
+        augmented_indexes = []
         for i, idx in enumerate(idxs):
             for channel in range(len(self.patches_xy)):
                 for aidx, (pxy, pxz, pyz) \
@@ -349,15 +362,35 @@ class ApplicationWindow(QtWidgets.QMainWindow):
                         col_idx += self.patch_len * self.n_channels
             for _ in range(n_augment):
                 classes.append(0 if self.marks[idx] == -1 else 1)
+            augmented_indexes.append(np.ones(n_augment, np.uint32) * idx)
         classes = np.array(classes)
-        pca_features = self.pca.transform(patches)
+        augmented_indexes = np.hstack(augmented_indexes)
+        pca_features = self.augment_features(self.pca.transform(patches),
+                                             augmented_indexes)
 
         self.classifier.fit(pca_features, classes)
         self.statusBar().showMessage("Predicting...")
-        self.predictions = self.classifier.predict(self.pca_features)
-        self.pred_probs = self.classifier.predict_proba(self.pca_features)
+        self.predictions = self.classifier.predict(self.augmented_features)
+        self.pred_probs = self.classifier.predict_proba(self.augmented_features)
         self.statusBar().showMessage("Training complete: oob error = %.3f" %
                                      self.classifier.oob_score_)
+
+    def augment_features(self, pca_features, indexes=None):
+        """Augment the feature vector with positional informati;./on
+
+        :param pca_features: the PCA feature vectors
+        :param indexes: the indexes of the cells
+        """
+        if indexes is None:
+            indexes = np.arange(self.n_patches)
+        if self.use_position:
+            return np.column_stack(
+                (pca_features,
+                 self.x[indexes],
+                 self.y[indexes],
+                 self.z[indexes]))
+        else:
+            return pca_features
 
     def imageNext(self):
         mask = np.where(self.marks == 0)[0]
@@ -552,6 +585,7 @@ def main():
         webbrowser.open_new(viewer.get_viewer_url())
     window = ApplicationWindow(patches_xy, patches_xz, patches_yz,
                                x, y, z, args.n_components,
+                               args.use_position,
                                args.whiten,
                                args.max_samples,
                                args.n_jobs, args.output, viewer, image_names,
