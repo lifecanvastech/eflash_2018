@@ -548,8 +548,11 @@ def main():
             patches_xy.append(fd["patches_xy"][:])
             patches_xz.append(fd["patches_xz"][:])
             patches_yz.append(fd["patches_yz"][:])
-    if len(args.neuroglancer) == 0:
+    if args.neuroglancer is None or len(args.neuroglancer) == 0:
         viewer = None
+        image_names = None
+        multiplier = None
+        colors = []
     else:
         import neuroglancer
         import webbrowser

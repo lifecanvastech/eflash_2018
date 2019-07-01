@@ -9,7 +9,6 @@ setup(
     install_requires=[
         "h5py",
         "matplotlib",
-        "phathom",
         "scipy",
         "scikit-learn",
         "scikit-image"

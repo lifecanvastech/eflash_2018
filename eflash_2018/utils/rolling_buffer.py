@@ -1,5 +1,5 @@
 import abc
-from phathom.utils import SharedMemory
+from eflash_2018.utils.shared_memory import SharedMemory
 import numpy as np
 import tifffile
 import multiprocessing
