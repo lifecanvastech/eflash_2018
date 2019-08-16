@@ -106,7 +106,8 @@ def main():
     y1p = y1a + args.padding_xy
     y1p[-1] = y_extent
     points = []
-    for z0 in range(args.padding_z, z_extent - args.padding_z, args.block_size_z):
+    for z0 in tqdm.trange(args.padding_z, z_extent - args.padding_z, args.block_size_z,
+                          desc="Reading Z-block"):
         z1 = min(z0 + args.block_size_z, z_extent - args.padding_z)
         z0p = z0 - args.padding_z
         z1p = min(z1 + args.padding_z, z_extent)
